@@ -1,0 +1,5 @@
+break if
+watch
+rwatch
+frame 12 ; idzie do 12 ramki stosu
+info locals
