@@ -4,6 +4,7 @@
 #include <assert.h>
 #include <errno.h>
 #include <stdio.h>
+#include <string.h>
 
 typedef struct mem_block {
     int32_t mb_size; // mb_size > 0 => free, mb_size < 0 => allocated
@@ -21,16 +22,6 @@ typedef struct mem_chunk {
 } mem_chunk_t;
 
 LIST_HEAD(, mem_chunk) chunk_list; // list of all chunks
-
-int foo_posix_memalign(void **memptr, size_t alignment, size_t size) {
-    #if MALLOC_DEBUG
-        fprintf(stderr, "called foo_posix_memalign(%p, %lu, %lu)\n", memptr, alignment, size);
-    #endif
-
-    if (size == 0) {
-        *memptr = NULL;
-    }
-}
 
 void *foo_malloc(size_t size) {
     #if MALLOC_DEBUG
@@ -57,15 +48,52 @@ void *foo_calloc(size_t count, size_t size) {
         fprintf(stderr, "called foo_calloc(%lu, %lu)\n", count, size);
     #endif
 
+    if (count == 0 || size == 0) {
+        return NULL;
+    }
+
+    size_t bytes = count * size;
+    if (bytes / size != count) {
+        errno = ENOMEM;
+        return NULL;
+    }
+
+    void *ptr = foo_malloc(bytes);
+    memset(ptr, 0, bytes);    
+
+    return ptr;
 }
 
+// TODO
 void *foo_realloc(void *ptr, size_t size) {
     #if MALLOC_DEBUG
         fprintf(stderr, "called foo_realloc(%p, %lu)\n", ptr, size);
     #endif
 
+    if (ptr == NULL) {
+        return foo_malloc(size);
+    }
+
+    if (size == 0) {
+        foo_free(ptr);
+        return NULL; // ???
+    }
+
 }
 
+// TODO
+int foo_posix_memalign(void **memptr, size_t alignment, size_t size) {
+    #if MALLOC_DEBUG
+        fprintf(stderr, "called foo_posix_memalign(%p, %lu, %lu)\n", memptr, alignment, size);
+    #endif
+
+    if (size == 0) {
+        *memptr = NULL;
+    }
+}
+
+
+// TODO
 void foo_free(void *ptr) {
     #if MALLOC_DEBUG
         fprintf(stderr, "called foo_free(%p)\n", ptr);
@@ -73,7 +101,7 @@ void foo_free(void *ptr) {
 
 }
 
-// Udostępnij procedurę mdump drukującą stan menadżera pamięci – tj. listy wszystkich obszarów oraz bloków.    
+// TODO
 void mdump() {
 
 }
