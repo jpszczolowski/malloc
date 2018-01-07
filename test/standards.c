@@ -87,7 +87,34 @@ MU_TEST(calloc_sets_memory_to_zero) {
     foo_free(ptr);
 }
 
+static int realloc_size_from, realloc_size_to;
+#define min(a, b) ((a) < (b) ? (a) : (b))
+MU_TEST(realloc_doesnt_change_content) {
+    int some_constant = 0x8BADF00D;
 
+    int *ptr = foo_malloc(realloc_size_from * sizeof(int));
+    for (int i = 0; i < realloc_size_from; i++) {
+        ptr[i] = some_constant;
+    }
+
+    ptr = foo_realloc(ptr, realloc_size_to * sizeof(int));
+    for (int i = 0; i < min(realloc_size_from, realloc_size_to); i++) {
+        mu_check(ptr[i] == some_constant);
+    }
+
+    foo_free(ptr);
+}
+
+MU_TEST(realloc_infinity_returns_enomem) {
+    int *ptr = foo_malloc(1);
+    mu_check(ptr != NULL);
+
+    ptr = foo_realloc(ptr, ULLONG_MAX);
+    
+    mu_check(ptr == NULL);
+    mu_check(errno == ENOMEM);
+    foo_free(ptr);   
+}
 
 MU_TEST_SUITE(all_tests) {
     MU_RUN_TEST(malloc_0_returns_null);
@@ -102,6 +129,14 @@ MU_TEST_SUITE(all_tests) {
     MU_RUN_TEST(calloc_count_0_returns_null);
     MU_RUN_TEST(calloc_infinity_returns_enomem);
     MU_RUN_TEST(calloc_sets_memory_to_zero);
+
+    MU_RUN_TEST(realloc_infinity_returns_enomem);
+    realloc_size_from = 100;
+    realloc_size_to = 10000;
+    MU_RUN_TEST(realloc_doesnt_change_content);
+    realloc_size_from = 10000;
+    realloc_size_to = 100;
+    MU_RUN_TEST(realloc_doesnt_change_content);
 }
 
 int main() {
