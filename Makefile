@@ -1,5 +1,5 @@
 CC = clang
-CFLAGS = -std=gnu11 -Wall -Wextra
+CFLAGS = -std=gnu11 -Wall -Wextra -g
 
 all: build build/malloc.so build/standards
 
