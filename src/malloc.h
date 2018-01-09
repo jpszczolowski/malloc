@@ -4,7 +4,7 @@
 #include <stddef.h>
 
 #define MALLOC_DEBUG 1
-#define DELETE_FOO 1
+#define DELETE_FOO 0
 
 #if DELETE_FOO
     #define foo_malloc malloc

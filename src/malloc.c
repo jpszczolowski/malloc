@@ -53,15 +53,15 @@ LIST_HEAD(, mem_chunk) chunk_list; // list of all chunks
                                                                           
 */
 
-mem_block_t *get_prev_block(mem_block_t *block_ptr) {
+extern inline mem_block_t *get_prev_block(mem_block_t *block_ptr) {
     return (mem_block_t *) *((int64_t *) block_ptr - 1);
 }
 
-mem_block_t *get_next_block(mem_block_t *block_ptr) {
+extern inline mem_block_t *get_next_block(mem_block_t *block_ptr) {
     return (mem_block_t *) ((char *) block_ptr + abs(block_ptr->mb_size) + 2 * sizeof(void *));
 }
 
-mem_block_t *get_block_start_from_user_ptr(void *user_ptr) {
+extern inline mem_block_t *get_block_start_from_user_ptr(void *user_ptr) {
     int64_t *ptr = (int64_t *) user_ptr;
     do {
         ptr--;
@@ -69,7 +69,7 @@ mem_block_t *get_block_start_from_user_ptr(void *user_ptr) {
     return (mem_block_t *) ptr;
 }
 
-mem_chunk_t *get_chunk_start_from_block_ptr(mem_block_t *block_ptr) {
+extern inline mem_chunk_t *get_chunk_start_from_block_ptr(mem_block_t *block_ptr) {
     mem_block_t *cur_block_ptr = block_ptr;
     do {
         cur_block_ptr = get_prev_block(cur_block_ptr);
@@ -105,17 +105,17 @@ mem_block_t *find_free_block(int32_t size) {
     return NULL;
 }
 
-size_t round_up_to(size_t number, size_t multiple) {
+extern inline size_t round_up_to(size_t number, size_t multiple) {
     return (number + multiple - 1) / multiple * multiple;
 }
 
 // get boundary tag address of block_ptr if block_ptr->mb_size is known
-void *get_boundary_tag_addr(mem_block_t *block_ptr) {
+extern inline void *get_boundary_tag_addr(mem_block_t *block_ptr) {
     return (void *) ((char *) block_ptr + abs(block_ptr->mb_size) + sizeof(void *));
 }
 
 // set boundary tag of block_ptr if block_ptr->mb_size is known
-void set_boundary_tag(mem_block_t *block_ptr) {
+extern inline void set_boundary_tag(mem_block_t *block_ptr) {
     *(uint64_t *) get_boundary_tag_addr(block_ptr) = (uint64_t) block_ptr;
 }
 
