@@ -95,22 +95,33 @@ void *foo_realloc(void *ptr, size_t size) {
         foo_free(ptr);
         return NULL; // ???
     }
+
+    return (void *) 42; // TODO
 }
 
-mem_block_t *find_free_block(size_t size) {
+mem_block_t *find_free_block(int32_t size) {
     #if MALLOC_DEBUG
-        fprintf(stderr, "called find_free_block(%lu)\n", size);
+        fprintf(stderr, "called find_free_block(%d)\n", size);
     #endif    
+
+    assert(size > 0);
 
     mem_chunk_t *chunk_ptr;
     LIST_FOREACH(chunk_ptr, &chunk_list, ma_node) {
         mem_block_t *block_ptr;
         LIST_FOREACH(block_ptr, &chunk_ptr->ma_freeblks, mb_node) {
             if (block_ptr->mb_size >= size) {
+                #if MALLOC_DEBUG
+                    fprintf(stderr, "find_free_block(%d) returned %p\n", size, block_ptr);
+                #endif
                 return block_ptr;
             }
         }
     }
+
+    #if MALLOC_DEBUG
+        fprintf(stderr, "find_free_block(%d) returned %p\n", size, NULL);
+    #endif
     return NULL;
 }
 
@@ -136,16 +147,22 @@ int foo_posix_memalign(void **memptr, size_t alignment, size_t size) {
 
     size_t aligned_size = round_up_to(alignment - sizeof(void *) + size, sizeof(void *));
 
+    if (aligned_size > INT32_MAX) {
+        return ENOMEM;
+    }
+
     mem_block_t *free_block_ptr = find_free_block(aligned_size);
 
     if (free_block_ptr == NULL) {
         size_t mmap_len = aligned_size + sizeof(mem_chunk_t) + sizeof(void *); // boundary tag
         mmap_len = round_up_to(mmap_len, getpagesize());
-        fprintf(stderr, "mmap_len = %d\n", mmap_len);
+        fprintf(stderr, "mmap_len = %lu\n", mmap_len);
 
         assert(mmap_len > 0);
-        mem_chunk_t *chunk_ptr = mmap(NULL, mmap_len, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS, -1, -1);
+        mem_chunk_t *chunk_ptr = mmap(NULL, mmap_len, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0);
         
+        fprintf(stderr, "chunk_ptr = %p\n", chunk_ptr);
+
         if (chunk_ptr == MAP_FAILED) {
             assert(errno == ENOMEM || errno == EINVAL);
             return ENOMEM;
@@ -155,19 +172,22 @@ int foo_posix_memalign(void **memptr, size_t alignment, size_t size) {
         chunk_ptr->size = mmap_len - sizeof(mem_chunk_t);
         LIST_INIT(&chunk_ptr->ma_freeblks);
         chunk_ptr->ma_first.mb_size = 0; // first block in chunk
-        chunk_ptr->ma_first.mb_data[0] = &chunk_ptr->ma_first.mb_size; // boundary tag -- pointer to first block
+        chunk_ptr->ma_first.mb_data[0] = (uint64_t) &chunk_ptr->ma_first; // boundary tag -- pointer to first block
 
-        mem_block_t *block_ptr = &chunk_ptr->ma_first.mb_data[1];
+        mem_block_t *block_ptr = (mem_block_t *) &chunk_ptr->ma_first.mb_data[1]; // first non-empty block
         LIST_INSERT_HEAD(&chunk_ptr->ma_freeblks, block_ptr, mb_node);
 
         free_block_ptr = block_ptr;
     }
 
     void *data = &free_block_ptr->mb_data;
-    void *user_ptr = round_up_to(data, alignment);
+    void *user_ptr = (void *) round_up_to((size_t) data, alignment);
     memset(data, 0, user_ptr - data);
     
-    return user_ptr;
+    fprintf(stderr, "user_ptr = %p\n", user_ptr);
+    
+    *memptr = user_ptr;
+    return 0;
 }
 
 
@@ -181,5 +201,51 @@ void foo_free(void *ptr) {
 
 // TODO
 void mdump() {
+    #if MALLOC_DEBUG
+        fprintf(stderr, "called mdump()\n");
+    #endif
 
+    mem_chunk_t *chunk_ptr;
+    LIST_FOREACH(chunk_ptr, &chunk_list, ma_node) {
+        fprintf(stderr, "chunk_ptr %p, size %d, &ma_first %p\n", chunk_ptr, chunk_ptr->size, &chunk_ptr->ma_first);
+        
+        fprintf(stderr, "all blocks:\n");
+        mem_block_t *cur_block_ptr = &chunk_ptr->ma_first;
+        int cnt_size_0 = 0;
+        while (cnt_size_0 != 2) {
+            int32_t size = cur_block_ptr->mb_size;
+            fprintf(stderr, " ptr %p, size %d\n", cur_block_ptr, size);
+            
+            cnt_size_0 += (size == 0);
+
+            if (size > 0) {
+                fprintf(stderr, "  free\n");
+                fprintf(stderr, "  prev %p, next %p\n", cur_block_ptr->mb_node.le_next, *cur_block_ptr->mb_node.le_prev);
+            } else if (size < 0) {
+                fprintf(stderr, "  occupied\n");
+                fprintf(stderr, "  data:\n");
+                for (int i = 0; i < size; i++) {
+                    fprintf(stderr, "%lu", cur_block_ptr->mb_data[i]);
+                }
+                fprintf(stderr, "\n");
+            }
+
+            cur_block_ptr += size + 1;
+            fprintf(stderr, " boundary tag %p\n", (void *) *(uint64_t *)(cur_block_ptr));
+            cur_block_ptr++;
+        }
+        
+        fprintf(stderr, "free blocks:\n");
+        mem_block_t *block_ptr;
+        LIST_FOREACH(block_ptr, &chunk_ptr->ma_freeblks, mb_node) {
+            fprintf(stderr, " ptr %p, size %d\n", block_ptr, block_ptr->mb_size);          
+            
+            if (block_ptr->mb_size < 0) {
+                fprintf(stderr, "block_ptr->mb_data:\n");
+                for (int i = 0; i < block_ptr->mb_size; i++) {
+                    fprintf(stderr, "%lu", block_ptr->mb_data[i]);
+                }
+            } 
+        }
+    }
 }
