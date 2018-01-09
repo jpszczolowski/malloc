@@ -8,6 +8,8 @@
 #include <unistd.h>
 #include <sys/mman.h>
 
+#define abs(x) ((x) >= 0 ? (x) : -(x))
+
 typedef struct mem_block {
     int32_t mb_size; // mb_size > 0 => free, mb_size < 0 => allocated
     union {
@@ -44,7 +46,6 @@ void *foo_malloc(size_t size) {
             assert(0);
     }
 }
-
 
 void *foo_calloc(size_t count, size_t size) { 
     #if MALLOC_DEBUG
@@ -129,6 +130,14 @@ size_t round_up_to(size_t number, size_t multiple) {
     return (number + multiple - 1) / multiple * multiple;
 }
 
+// mem_block_t *get_block_start_from_user_ptr(void *user_ptr) {
+//     int64_t *ptr = (int64_t *) user_ptr;
+//     do {
+//         ptr--;
+//     } while (*ptr == 0);
+//     return ptr;
+// }
+
 // TODO
 int foo_posix_memalign(void **memptr, size_t alignment, size_t size) {
     #if MALLOC_DEBUG
@@ -154,7 +163,8 @@ int foo_posix_memalign(void **memptr, size_t alignment, size_t size) {
     mem_block_t *free_block_ptr = find_free_block(aligned_size);
 
     if (free_block_ptr == NULL) {
-        size_t mmap_len = aligned_size + sizeof(mem_chunk_t) + sizeof(void *); // boundary tag
+        // 3 is from boundary tag at the end and end-empty-block
+        size_t mmap_len = aligned_size + sizeof(mem_chunk_t) + 3 * sizeof(void *);
         mmap_len = round_up_to(mmap_len, getpagesize());
         fprintf(stderr, "mmap_len = %lu\n", mmap_len);
 
@@ -171,11 +181,22 @@ int foo_posix_memalign(void **memptr, size_t alignment, size_t size) {
         LIST_INSERT_HEAD(&chunk_list, chunk_ptr, ma_node);
         chunk_ptr->size = mmap_len - sizeof(mem_chunk_t);
         LIST_INIT(&chunk_ptr->ma_freeblks);
-        chunk_ptr->ma_first.mb_size = 0; // first block in chunk
-        chunk_ptr->ma_first.mb_data[0] = (uint64_t) &chunk_ptr->ma_first; // boundary tag -- pointer to first block
+        chunk_ptr->ma_first.mb_size = 0; // first empty block in chunk
+        chunk_ptr->ma_first.mb_data[0] = (uint64_t) &chunk_ptr->ma_first; // boundary tag -- pointer to first empty block
+
+        fprintf(stderr, "first empty block %p, boundary tag %p\n", &chunk_ptr->ma_first.mb_size,
+                (void *) chunk_ptr->ma_first.mb_data[0]);
 
         mem_block_t *block_ptr = (mem_block_t *) &chunk_ptr->ma_first.mb_data[1]; // first non-empty block
         LIST_INSERT_HEAD(&chunk_ptr->ma_freeblks, block_ptr, mb_node);
+        block_ptr->mb_size = chunk_ptr->size - 3 * sizeof(void *);
+
+        int64_t *end_ptr = (int64_t *) (((char *) chunk_ptr) + mmap_len - 8);
+        fprintf(stderr, "end_ptr - 1 %p\n", end_ptr - 1);
+
+        *end_ptr = (int64_t) (end_ptr - 1);
+        *(end_ptr - 1) = 0;
+        *(end_ptr - 2) = (int64_t) block_ptr;
 
         free_block_ptr = block_ptr;
     }
@@ -187,6 +208,23 @@ int foo_posix_memalign(void **memptr, size_t alignment, size_t size) {
     fprintf(stderr, "user_ptr = %p\n", user_ptr);
     
     *memptr = user_ptr;
+    
+    mem_block_t *block1_ptr = free_block_ptr;
+    
+    assert(block1_ptr->mb_size > 0);
+    int32_t block1_old_size = block1_ptr->mb_size;
+    block1_ptr->mb_size = -aligned_size;
+
+    mem_block_t *block2_ptr = (mem_block_t *) ((char *) block1_ptr->mb_data + abs(block1_ptr->mb_size) + sizeof(void *));
+    // +boundary tag
+
+    LIST_INSERT_AFTER(block1_ptr, block2_ptr, mb_node);
+    LIST_REMOVE(block1_ptr, mb_node);
+
+    *((int64_t *) block2_ptr - 1) = (int64_t) &block1_ptr; // block1 boundary tag
+    block2_ptr->mb_size = block1_old_size - abs(block1_ptr->mb_size) - 2*sizeof(void *);
+    // -boundary tag-block2_ptr->mb_size
+
     return 0;
 }
 
@@ -220,32 +258,25 @@ void mdump() {
 
             if (size > 0) {
                 fprintf(stderr, "  free\n");
-                fprintf(stderr, "  prev %p, next %p\n", cur_block_ptr->mb_node.le_next, *cur_block_ptr->mb_node.le_prev);
+                fprintf(stderr, "  prev %p, next %p\n", cur_block_ptr->mb_node.le_prev, cur_block_ptr->mb_node.le_next);
             } else if (size < 0) {
                 fprintf(stderr, "  occupied\n");
                 fprintf(stderr, "  data:\n");
                 for (int i = 0; i < size; i++) {
-                    fprintf(stderr, "%lu", cur_block_ptr->mb_data[i]);
+                    fprintf(stderr, "%d", *((char *)cur_block_ptr->mb_data + i));
                 }
                 fprintf(stderr, "\n");
             }
 
-            cur_block_ptr += size + 1;
-            fprintf(stderr, " boundary tag %p\n", (void *) *(uint64_t *)(cur_block_ptr));
-            cur_block_ptr++;
+            cur_block_ptr = (mem_block_t *)((char *)cur_block_ptr + abs(size) + 8);
+            fprintf(stderr, " boundary tag %p\n\n", (void *) *(uint64_t *)(cur_block_ptr));
+            cur_block_ptr = (mem_block_t *)((char *)cur_block_ptr + 8);
         }
         
         fprintf(stderr, "free blocks:\n");
         mem_block_t *block_ptr;
         LIST_FOREACH(block_ptr, &chunk_ptr->ma_freeblks, mb_node) {
             fprintf(stderr, " ptr %p, size %d\n", block_ptr, block_ptr->mb_size);          
-            
-            if (block_ptr->mb_size < 0) {
-                fprintf(stderr, "block_ptr->mb_data:\n");
-                for (int i = 0; i < block_ptr->mb_size; i++) {
-                    fprintf(stderr, "%lu", block_ptr->mb_data[i]);
-                }
-            } 
         }
     }
 }
