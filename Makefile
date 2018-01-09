@@ -12,7 +12,7 @@ build/malloc.so: src/malloc.c src/malloc.h
 build/standards: test/standards.c src/malloc.c src/malloc.h
 	$(CC) $(CFLAGS) test/standards.c src/malloc.c -o build/standards -lrt -lm
 
-play: src/malloc.h src/malloc.c
+play: src/malloc.h src/malloc.c play.c
 	$(CC) $(CFLAGS) play.c src/malloc.c -o play
 
 test: all
