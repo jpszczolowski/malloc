@@ -18,6 +18,7 @@
 
 #define abs(x) ((x) >= 0 ? (x) : -(x))
 #define max(a, b) ((a) > (b) ? (a) : (b))
+#define min(a, b) ((a) < (b) ? (a) : (b))
 
 /*
   ___ _____ ___ _   _  ___ _____ _   _ ___ ___ ___ 
@@ -65,7 +66,7 @@ mem_block_t *get_block_start_from_user_ptr(void *user_ptr) {
     do {
         ptr--;
     } while (*ptr == 0);
-    return ptr;
+    return (mem_block_t *) ptr;
 }
 
 mem_chunk_t *get_chunk_start_from_block_ptr(mem_block_t *block_ptr) {
@@ -108,9 +109,14 @@ size_t round_up_to(size_t number, size_t multiple) {
     return (number + multiple - 1) / multiple * multiple;
 }
 
+// get boundary tag address of block_ptr if block_ptr->mb_size is known
+void *get_boundary_tag_addr(mem_block_t *block_ptr) {
+    return (void *) ((char *) block_ptr + abs(block_ptr->mb_size) + sizeof(void *));
+}
+
 // set boundary tag of block_ptr if block_ptr->mb_size is known
 void set_boundary_tag(mem_block_t *block_ptr) {
-    *(uint64_t *)((char *) block_ptr + abs(block_ptr->mb_size) + sizeof(void *)) = (uint64_t) block_ptr;
+    *(uint64_t *) get_boundary_tag_addr(block_ptr) = (uint64_t) block_ptr;
 }
 
 /*
@@ -166,7 +172,6 @@ void *foo_calloc(size_t count, size_t size) {
     return ptr;
 }
 
-// TODO
 void *foo_realloc(void *ptr, size_t size) {
     #if MALLOC_DEBUG
         fprintf(stderr, "called foo_realloc(%p, %lu)\n", ptr, size);
@@ -190,10 +195,30 @@ void *foo_realloc(void *ptr, size_t size) {
         return NULL;
     }
 
-    return (void *) 42; // TODO
+    if (size > INT32_MAX) {
+        errno = ENOMEM;
+        return NULL;
+    }
+
+    mem_block_t *block_ptr = get_block_start_from_user_ptr(ptr);
+    void *boundary_tag = get_boundary_tag_addr(block_ptr);
+    int32_t available_length = (int32_t) boundary_tag - (int32_t) ptr;
+    
+    fprintf(stderr, "available_length %d\n", available_length);
+
+    if ((int32_t) size > available_length) {
+        void *new_ptr = foo_malloc(size);
+        memcpy(new_ptr, ptr, min((int32_t) size, available_length));
+        foo_free(ptr);
+        ptr = new_ptr;
+    }
+
+    // TODO check whether or not next block is empty
+
+    return ptr;
 }
 
-// TODO
+// TODO refactor
 int foo_posix_memalign(void **memptr, size_t alignment, size_t size) {
     #if MALLOC_DEBUG
         fprintf(stderr, "called foo_posix_memalign(%p, %lu, %lu)\n", memptr, alignment, size);
@@ -223,12 +248,12 @@ int foo_posix_memalign(void **memptr, size_t alignment, size_t size) {
         // 3 is from boundary tag at the end and end-empty-block
         size_t mmap_len = aligned_size + sizeof(mem_chunk_t) + 3 * sizeof(void *);
         mmap_len = round_up_to(mmap_len, getpagesize());
-        fprintf(stderr, "mmap_len = %lu\n", mmap_len);
+        // fprintf(stderr, "mmap_len = %lu\n", mmap_len);
 
         assert(mmap_len > 0);
         mem_chunk_t *chunk_ptr = mmap(NULL, mmap_len, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0);
         
-        fprintf(stderr, "chunk_ptr = %p\n", chunk_ptr);
+        // fprintf(stderr, "chunk_ptr = %p\n", chunk_ptr);
 
         if (chunk_ptr == MAP_FAILED) {
             assert(errno == ENOMEM || errno == EINVAL);
@@ -241,15 +266,15 @@ int foo_posix_memalign(void **memptr, size_t alignment, size_t size) {
         chunk_ptr->ma_first.mb_size = 0; // first empty block in chunk
         chunk_ptr->ma_first.mb_data[0] = (uint64_t) &chunk_ptr->ma_first; // boundary tag -- pointer to first empty block
 
-        fprintf(stderr, "first empty block %p, boundary tag %p\n", &chunk_ptr->ma_first.mb_size,
-                (void *) chunk_ptr->ma_first.mb_data[0]);
+        // fprintf(stderr, "first empty block %p, boundary tag %p\n", &chunk_ptr->ma_first.mb_size,
+                // (void *) chunk_ptr->ma_first.mb_data[0]);
 
         mem_block_t *block_ptr = (mem_block_t *) &chunk_ptr->ma_first.mb_data[1]; // first non-empty block
         LIST_INSERT_HEAD(&chunk_ptr->ma_freeblks, block_ptr, mb_node);
         block_ptr->mb_size = chunk_ptr->size - 3 * sizeof(void *);
 
         int64_t *end_ptr = (int64_t *) (((char *) chunk_ptr) + mmap_len - 8);
-        fprintf(stderr, "end_ptr - 1 %p\n", end_ptr - 1);
+        // fprintf(stderr, "end_ptr - 1 %p\n", end_ptr - 1);
 
         *end_ptr = (int64_t) (end_ptr - 1);
         *(end_ptr - 1) = 0;
@@ -261,7 +286,7 @@ int foo_posix_memalign(void **memptr, size_t alignment, size_t size) {
     void *data = &free_block_ptr->mb_data;
     void *user_ptr = (void *) round_up_to((size_t) data, alignment);
     
-    fprintf(stderr, "user_ptr = %p\n", user_ptr);
+    // fprintf(stderr, "user_ptr = %p\n", user_ptr);
     
     *memptr = user_ptr;
     
@@ -277,11 +302,10 @@ int foo_posix_memalign(void **memptr, size_t alignment, size_t size) {
     LIST_INSERT_AFTER(block1_ptr, block2_ptr, mb_node);
     LIST_REMOVE(block1_ptr, mb_node);
 
-    fprintf(stderr, "zeroing %lu bytes from %p\n", user_ptr - data, data);
+    // fprintf(stderr, "zeroing %lu bytes from %p\n", user_ptr - data, data);
     memset(data, 0, user_ptr - data);
 
-    fprintf(stderr, "block1_ptr %p, block2_ptr %p\n", block1_ptr, block2_ptr);
-    
+    // fprintf(stderr, "block1_ptr %p, block2_ptr %p\n", block1_ptr, block2_ptr);
     
     set_boundary_tag(block1_ptr);
 
@@ -290,13 +314,13 @@ int foo_posix_memalign(void **memptr, size_t alignment, size_t size) {
 
     set_boundary_tag(block2_ptr);
 
-    assert(block2_ptr->mb_size >= 2 * sizeof(void *));
+    assert(block2_ptr->mb_size > 0);
+    assert((unsigned long) block2_ptr->mb_size >= 2 * sizeof(void *));
     // TODO jak block2 za mały to go nie rób
 
     return 0;
 }
 
-// TODO
 void foo_free(void *ptr) {
     #if MALLOC_DEBUG
         fprintf(stderr, "called foo_free(%p)\n", ptr);
@@ -399,7 +423,7 @@ void mdump() {
             fprintf(stderr, " boundary tag is at address %p\n", cur_block_ptr);
             uint64_t boundary_tag = *(uint64_t *)(cur_block_ptr);
             fprintf(stderr, " boundary tag %p\n\n", (void *) boundary_tag);
-            assert(prev_block_ptr == boundary_tag);
+            assert((uint64_t) prev_block_ptr == boundary_tag);
             
             cur_block_ptr = (mem_block_t *)((char *)cur_block_ptr + 8);
         }

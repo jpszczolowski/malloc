@@ -30,32 +30,36 @@ int main() {
 
     int *other_ptr2 = ptr;
 
-    wrap_posix_memalign(8, 3);
-    memset(ptr, 'c', 3);
+    foo_realloc(other_ptr2, 8);
+    memset(other_ptr2, 'b', 8);
     dump();
+
+    // wrap_posix_memalign(8, 3);
+    // memset(ptr, 'c', 3);
+    // dump();
     
-    int *other_ptr3 = ptr;
+    // int *other_ptr3 = ptr;
 
-    wrap_posix_memalign(8, 20);
-    memset(ptr, 'd', 20);
-    dump();
+    // wrap_posix_memalign(8, 20);
+    // memset(ptr, 'd', 20);
+    // dump();
 
-    int *other_ptr4 = ptr;
+    // int *other_ptr4 = ptr;
     
-    wrap_posix_memalign(256, 1);
-    memset(ptr, 'd', 1);
-    dump();
+    // wrap_posix_memalign(256, 1);
+    // memset(ptr, 'd', 1);
+    // dump();
 
-    foo_free(other_ptr2);
-    dump();
-    foo_free(other_ptr1);
-    dump();
-    foo_free(ptr);
-    dump();
-    foo_free(other_ptr3);
-    dump();
-    foo_free(other_ptr4);
-    dump();
+    // foo_free(other_ptr2);
+    // dump();
+    // foo_free(other_ptr1);
+    // dump();
+    // foo_free(ptr);
+    // dump();
+    // foo_free(other_ptr3);
+    // dump();
+    // foo_free(other_ptr4);
+    // dump();
 
     return 0;
 }
