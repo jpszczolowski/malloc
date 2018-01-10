@@ -20,15 +20,20 @@
 #endif
 
 MU_TEST(allocating_and_freeing) {
-    int cnt = 1000;
-    int size = 1 << 15; // 1B to 32 kB
+    int cnt = 253;
+    int size = 1 << 5;
     void *ptr[cnt];
 
     srand(time(NULL));
 
     for (int i = 0; i < cnt; i++) {
-        ptr[i] = foo_malloc(rand() % size + 1);
+        int size_to_alloc = rand() % size + 1;
+        ptr[i] = foo_malloc(size_to_alloc);
+        for (int j = 0; j < size_to_alloc; j++) {
+            *((char *) ptr[i] + j) = 'X';
+        }
         mu_check(ptr[i] != NULL);
+        mdump();
     }
 
     for (int i = 0; i < cnt; i++) {
