@@ -26,7 +26,7 @@
  \__ \ | | |   / |_| | (__  | | | |_| |   / _|\__ \
  |___/ |_| |_|_\\___/ \___| |_|  \___/|_|_\___|___/
 
-*/                                   
+*/
 
 typedef struct mem_block {
     int32_t mb_size; // mb_size > 0 => free, mb_size < 0 => allocated
@@ -99,9 +99,6 @@ mem_block_t *find_free_block(int32_t size) {
         }
     }
 
-    #if MALLOC_DEBUG
-        fprintf(stderr, "find_free_block(%d) returned %p\n", size, NULL);
-    #endif
     return NULL;
 }
 
@@ -117,6 +114,45 @@ extern inline void *get_boundary_tag_addr(mem_block_t *block_ptr) {
 // set boundary tag of block_ptr if block_ptr->mb_size is known
 extern inline void set_boundary_tag(mem_block_t *block_ptr) {
     *(uint64_t *) get_boundary_tag_addr(block_ptr) = (uint64_t) block_ptr;
+}
+
+mem_block_t *create_chunk_and_return_free_block_ptr(size_t size) {    
+    #if MALLOC_DEBUG
+        fprintf(stderr, "called create_chunk_and_return_free_block_ptr(%lu)\n", size);
+    #endif
+
+    size_t mmap_len = sizeof(mem_chunk_t) + size + 3 * sizeof(void *);
+    // header & data & boundary tag & empty block at the end
+    mmap_len = round_up_to(mmap_len, getpagesize());
+
+    assert(mmap_len > 0);
+    mem_chunk_t *chunk_ptr = mmap(NULL, mmap_len, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0);
+        
+    if (chunk_ptr == MAP_FAILED) {
+        assert(errno == ENOMEM || errno == EINVAL);
+        return NULL;
+    }
+
+    chunk_ptr->size = mmap_len - sizeof(mem_chunk_t);
+    
+    mem_block_t *first_empty_block_ptr = &chunk_ptr->ma_first;
+    first_empty_block_ptr->mb_size = 0;
+    set_boundary_tag(first_empty_block_ptr);
+
+    LIST_INSERT_HEAD(&chunk_list, chunk_ptr, ma_node);
+    LIST_INIT(&chunk_ptr->ma_freeblks);
+
+    mem_block_t *free_block_ptr = (mem_block_t *) ((char *) first_empty_block_ptr + 2 * sizeof(void *));
+    free_block_ptr->mb_size = chunk_ptr->size - 3 * sizeof(void *);
+    set_boundary_tag(free_block_ptr);
+
+    LIST_INSERT_HEAD(&chunk_ptr->ma_freeblks, free_block_ptr, mb_node);
+
+    mem_block_t *last_empty_block = (mem_block_t *) ((char *) chunk_ptr + mmap_len - 2 * sizeof(void *));
+    last_empty_block->mb_size = 0;
+    set_boundary_tag(last_empty_block);
+
+    return free_block_ptr;
 }
 
 /*
@@ -245,55 +281,24 @@ int foo_posix_memalign(void **memptr, size_t alignment, size_t size) {
     mem_block_t *free_block_ptr = find_free_block(aligned_size);
 
     if (free_block_ptr == NULL) {
-        // 3 is from boundary tag at the end and end-empty-block
-        size_t mmap_len = aligned_size + sizeof(mem_chunk_t) + 3 * sizeof(void *);
-        mmap_len = round_up_to(mmap_len, getpagesize());
-        // fprintf(stderr, "mmap_len = %lu\n", mmap_len);
-
-        assert(mmap_len > 0);
-        mem_chunk_t *chunk_ptr = mmap(NULL, mmap_len, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0);
-        
-        // fprintf(stderr, "chunk_ptr = %p\n", chunk_ptr);
-
-        if (chunk_ptr == MAP_FAILED) {
-            assert(errno == ENOMEM || errno == EINVAL);
-            return ENOMEM;
-        }
-
-        LIST_INSERT_HEAD(&chunk_list, chunk_ptr, ma_node);
-        chunk_ptr->size = mmap_len - sizeof(mem_chunk_t);
-        LIST_INIT(&chunk_ptr->ma_freeblks);
-        chunk_ptr->ma_first.mb_size = 0; // first empty block in chunk
-        chunk_ptr->ma_first.mb_data[0] = (uint64_t) &chunk_ptr->ma_first; // boundary tag -- pointer to first empty block
-
-        // fprintf(stderr, "first empty block %p, boundary tag %p\n", &chunk_ptr->ma_first.mb_size,
-                // (void *) chunk_ptr->ma_first.mb_data[0]);
-
-        mem_block_t *block_ptr = (mem_block_t *) &chunk_ptr->ma_first.mb_data[1]; // first non-empty block
-        LIST_INSERT_HEAD(&chunk_ptr->ma_freeblks, block_ptr, mb_node);
-        block_ptr->mb_size = chunk_ptr->size - 3 * sizeof(void *);
-
-        int64_t *end_ptr = (int64_t *) (((char *) chunk_ptr) + mmap_len - 8);
-        // fprintf(stderr, "end_ptr - 1 %p\n", end_ptr - 1);
-
-        *end_ptr = (int64_t) (end_ptr - 1);
-        *(end_ptr - 1) = 0;
-        *(end_ptr - 2) = (int64_t) block_ptr;
-
-        free_block_ptr = block_ptr;
+        free_block_ptr = create_chunk_and_return_free_block_ptr(aligned_size);
     }
 
-    void *data = &free_block_ptr->mb_data;
-    void *user_ptr = (void *) round_up_to((size_t) data, alignment);
+    if (free_block_ptr == NULL) {
+        return ENOMEM;
+    }
+
+    void *block_data = &free_block_ptr->mb_data;
+    void *user_ptr = (void *) round_up_to((size_t) block_data, alignment);
     
-    // fprintf(stderr, "user_ptr = %p\n", user_ptr);
-    
-    *memptr = user_ptr;
+    // now we'll split free block into block1 and block2
+    // we'll return block1 to the user and keep free block2 for future use
     
     mem_block_t *block1_ptr = free_block_ptr;
     
     assert(block1_ptr->mb_size > 0);
     int32_t block1_old_size = block1_ptr->mb_size;
+    
     block1_ptr->mb_size = -aligned_size;
 
     mem_block_t *block2_ptr = (mem_block_t *) ((char *) block1_ptr->mb_data + abs(block1_ptr->mb_size) + sizeof(void *));
@@ -303,7 +308,7 @@ int foo_posix_memalign(void **memptr, size_t alignment, size_t size) {
     LIST_REMOVE(block1_ptr, mb_node);
 
     // fprintf(stderr, "zeroing %lu bytes from %p\n", user_ptr - data, data);
-    memset(data, 0, user_ptr - data);
+    memset(block_data, 0, user_ptr - block_data);
 
     // fprintf(stderr, "block1_ptr %p, block2_ptr %p\n", block1_ptr, block2_ptr);
     
@@ -317,6 +322,9 @@ int foo_posix_memalign(void **memptr, size_t alignment, size_t size) {
     assert(block2_ptr->mb_size > 0);
     assert((unsigned long) block2_ptr->mb_size >= 2 * sizeof(void *));
     // TODO jak block2 za mały to go nie rób
+
+    assert((size_t) user_ptr % alignment == 0);
+    *memptr = user_ptr;
 
     return 0;
 }

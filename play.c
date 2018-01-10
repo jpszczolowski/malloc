@@ -18,19 +18,19 @@
 int main() {
     int *ptr;
 
-    wrap_posix_memalign(32, 128);
-    memset(ptr, 'a', 128);
+    wrap_posix_memalign(32ul, 128ul);
+    memset(ptr, 'a', 128ul);
     dump();
 
-    int *other_ptr1 = ptr;
+    // int *other_ptr1 = ptr;
     
-    wrap_posix_memalign(16, 1);
+    wrap_posix_memalign(16ul, 1ul);
     memset(ptr, 'b', 1);
     dump();
 
     int *other_ptr2 = ptr;
 
-    foo_realloc(other_ptr2, 8);
+    foo_realloc(other_ptr2, 8ul);
     memset(other_ptr2, 'b', 8);
     dump();
 
