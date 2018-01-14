@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
+#include <pthread.h>
 #include <sys/mman.h>
 
 /*
@@ -53,6 +54,8 @@ typedef struct mem_chunk {
 
 LIST_HEAD(, mem_chunk) chunk_list; // list of all chunks
 
+pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
+
 /*
   _  _ ___ _    ___ ___ ___     ___ _   _ _  _  ___ _____ ___ ___  _  _ ___ 
  | || | __| |  | _ \ __| _ \   | __| | | | \| |/ __|_   _|_ _/ _ \| \| / __|
@@ -78,7 +81,7 @@ extern inline mem_block_t *get_block_start_from_user_ptr(void *user_ptr) {
 }
 
 extern inline mem_chunk_t *get_chunk_start_from_block_ptr(mem_block_t *block_ptr) {
-    debug("called get_chunk_start_from_block_ptr(%p)\n", block_ptr);
+    // debug("called get_chunk_start_from_block_ptr(%p)\n", block_ptr);
 
     mem_block_t *cur_block_ptr = block_ptr;
     do {
@@ -87,12 +90,12 @@ extern inline mem_chunk_t *get_chunk_start_from_block_ptr(mem_block_t *block_ptr
     // cur_block_ptr is now &chunk_ptr->ma_first
 
     mem_chunk_t *ret = (mem_chunk_t *)((char *)cur_block_ptr - 4 * sizeof(void *));
-    debug("get_chunk_start_from_block_ptr(%p) returned %p\n", block_ptr, ret);
+    // debug("get_chunk_start_from_block_ptr(%p) returned %p\n", block_ptr, ret);
     return ret;
 }
 
 mem_block_t *find_free_block(int32_t size) {
-    debug("called find_free_block(%d)\n", size);
+    // debug("called find_free_block(%d)\n", size);
     assert(size > 0);
 
     mem_chunk_t *chunk_ptr;
@@ -100,7 +103,7 @@ mem_block_t *find_free_block(int32_t size) {
         mem_block_t *block_ptr;
         LIST_FOREACH(block_ptr, &chunk_ptr->ma_freeblks, mb_node) {
             if (block_ptr->mb_size >= size) {
-                debug("find_free_block(%d) returned %p\n", size, block_ptr);
+                // debug("find_free_block(%d) returned %p\n", size, block_ptr);
                 return block_ptr;
             }
         }
@@ -124,7 +127,7 @@ extern inline void set_boundary_tag(mem_block_t *block_ptr) {
 }
 
 mem_block_t *create_chunk_and_return_free_block_ptr(size_t size) {    
-    debug("called create_chunk_and_return_free_block_ptr(%lu)\n", size);
+    // debug("called create_chunk_and_return_free_block_ptr(%lu)\n", size);
 
     size_t mmap_len = sizeof(mem_chunk_t) + size + 3 * sizeof(void *);
     // header & data & boundary tag & empty block at the end
@@ -203,8 +206,7 @@ void *foo_calloc(size_t count, size_t size) {
         return NULL;
     }
     
-    memset(ptr, 0, bytes);    
-
+    memset(ptr, 0, bytes);
     return ptr;
 }
 
@@ -234,22 +236,42 @@ void *foo_realloc(void *ptr, size_t size) {
         return NULL;
     }
 
-    mem_block_t *block_ptr = get_block_start_from_user_ptr(ptr);
-    void *boundary_tag = get_boundary_tag_addr(block_ptr);
-    int32_t available_length = (int32_t) boundary_tag - (int32_t) ptr;
-    
-    debug("available_length %d\n", available_length);
+    int32_t size32 = size;
 
-    if ((int32_t) size > available_length) {
-        void *new_ptr = foo_malloc(size);
-        memcpy(new_ptr, ptr, min((int32_t) size, available_length));
-        foo_free(ptr);
-        ptr = new_ptr;
+    mem_block_t *block_ptr = get_block_start_from_user_ptr(ptr);
+    assert(block_ptr->mb_size < 0);
+    
+    void *boundary_tag = get_boundary_tag_addr(block_ptr);
+    int32_t available_length_in_this_block = (uint64_t) boundary_tag - (uint64_t) ptr;
+    
+    pthread_mutex_lock(&lock);
+
+    int32_t available_length_in_next_block = 0;
+    mem_block_t *next_block_ptr = get_next_block(block_ptr);
+    if (next_block_ptr->mb_size > 0) {
+        available_length_in_next_block += next_block_ptr->mb_size;
     }
 
-    // TODO check whether or not next block is empty
+    if (size32 < available_length_in_this_block) {
+        pthread_mutex_unlock(&lock);
+        return ptr;
+    }
 
-    return ptr;
+    int32_t available_length = available_length_in_this_block + available_length_in_next_block + 2 * (int32_t) sizeof(void *);
+    if (available_length_in_next_block > 0 && size32 < available_length) {
+        LIST_REMOVE(next_block_ptr, mb_node);
+        block_ptr->mb_size -= (next_block_ptr->mb_size + 2 * (int32_t) sizeof(void *));
+        set_boundary_tag(block_ptr);
+
+        pthread_mutex_unlock(&lock);
+        return ptr;
+    }
+
+    pthread_mutex_unlock(&lock);
+    void *new_ptr = foo_malloc(size);
+    memcpy(new_ptr, ptr, min(size32, available_length_in_this_block));
+    foo_free(ptr);
+    return new_ptr;
 }
 
 int foo_posix_memalign(void **memptr, size_t alignment, size_t size) {
@@ -278,6 +300,8 @@ int foo_posix_memalign(void **memptr, size_t alignment, size_t size) {
         return ENOMEM;
     }
 
+    pthread_mutex_lock(&lock);
+
     int32_t size32 = size;
     mem_block_t *free_block_ptr = find_free_block(size32);
 
@@ -286,6 +310,7 @@ int foo_posix_memalign(void **memptr, size_t alignment, size_t size) {
     }
 
     if (free_block_ptr == NULL) {
+        pthread_mutex_unlock(&lock);
         return ENOMEM;
     }
     
@@ -329,6 +354,8 @@ int foo_posix_memalign(void **memptr, size_t alignment, size_t size) {
     
     memset(block1_data, 0, user_ptr_to_ret - block1_data);
     *memptr = user_ptr_to_ret;
+    
+    pthread_mutex_unlock(&lock);
     return 0;
 }
 
@@ -339,16 +366,21 @@ void foo_free(void *ptr) {
         return;
     }
 
+    pthread_mutex_lock(&lock);
+
     mem_block_t *block_ptr = get_block_start_from_user_ptr(ptr);
     mem_block_t *next_block_ptr = get_next_block(block_ptr);
     mem_block_t *prev_block_ptr = get_prev_block(block_ptr);
 
+    assert(block_ptr->mb_size < 0);
     block_ptr->mb_size *= -1; // block is now free
 
     int next_block_free = next_block_ptr->mb_size != 0 && next_block_ptr->mb_size > 0;
     int prev_block_free = prev_block_ptr->mb_size != 0 && prev_block_ptr->mb_size > 0;
 
     if (next_block_free) {
+        // debug("%s", "next_block_free\n");
+
         block_ptr->mb_size += next_block_ptr->mb_size + 2 * sizeof(void *); // + boundary tag + next_block_ptr->mb_size
         
         if (!prev_block_free) { // if prev_block_free we'll have leave previous block on the list
@@ -360,6 +392,7 @@ void foo_free(void *ptr) {
     }
 
     if (prev_block_free) {
+        // debug("%s", "prev_block_free\n");
         prev_block_ptr->mb_size += block_ptr->mb_size + 2 * sizeof(void *);
         set_boundary_tag(prev_block_ptr);
         
@@ -367,6 +400,8 @@ void foo_free(void *ptr) {
     }
 
     if (get_prev_block(block_ptr)->mb_size == 0 && get_next_block(block_ptr)->mb_size == 0) {
+        // debug("%s", "delete chunk\n");
+        
         // there is only one block (and it's free) in the chunk, so delete the chunk
         mem_chunk_t *chunk_ptr = get_chunk_start_from_block_ptr(block_ptr);
         LIST_REMOVE(chunk_ptr, ma_node);
@@ -374,33 +409,53 @@ void foo_free(void *ptr) {
         size_t length_to_munmap = chunk_ptr->size + sizeof(mem_chunk_t);
         assert(length_to_munmap % getpagesize() == 0);
 
-        debug("called munmap(%p, %lu)\n", chunk_ptr, length_to_munmap);
+        // debug("called munmap(%p, %lu)\n", chunk_ptr, length_to_munmap);
         int munmap_ret = munmap(chunk_ptr, length_to_munmap);
         assert(munmap_ret == 0);
     } else if (!prev_block_free && !next_block_free) { // add yourself to the list
+        // debug("%s", "add myself to list\n");
         mem_chunk_t *chunk_ptr = get_chunk_start_from_block_ptr(block_ptr);
+        // debug("chunk addr %p\n", chunk_ptr);
 
-        mem_block_t *cur_block_ptr;
         int added_to_list = 0;
 
         if (LIST_EMPTY(&chunk_ptr->ma_freeblks)) {
+            // debug("%s", "insert_head\n");
             LIST_INSERT_HEAD(&chunk_ptr->ma_freeblks, block_ptr, mb_node);
             added_to_list = 1;
         } else {
+            // debug("%s", "list_foreach\n");
+            mem_block_t *cur_block_ptr;
+            mem_block_t *prev_block_ptr;
             LIST_FOREACH(cur_block_ptr, &chunk_ptr->ma_freeblks, mb_node) {
+                // debug("cur_block_ptr %p\n", cur_block_ptr);
                 if (cur_block_ptr > block_ptr) {
                     LIST_INSERT_BEFORE(cur_block_ptr, block_ptr, mb_node);
                     added_to_list = 1;
                     break;
-                }     
+                }
+                prev_block_ptr = cur_block_ptr;
             }
+            if (!added_to_list) {
+                LIST_INSERT_AFTER(prev_block_ptr, block_ptr, mb_node);
+                added_to_list = 1;
+            }
+            // debug("prev_block_ptr is now %p\n", prev_block_ptr);
         }
 
-        assert(added_to_list == 1);
+        if (!added_to_list) {
+            pthread_mutex_unlock(&lock);
+            mdump();
+        }
+        assert(added_to_list);
     }
+
+    pthread_mutex_unlock(&lock);
 }
 
 void check_mem() {
+    pthread_mutex_lock(&lock);
+
     mem_chunk_t *chunk_ptr;
     LIST_FOREACH(chunk_ptr, &chunk_list, ma_node) {        
         mem_block_t *cur_block_ptr = &chunk_ptr->ma_first;
@@ -421,16 +476,18 @@ void check_mem() {
         LIST_FOREACH(block_ptr, &chunk_ptr->ma_freeblks, mb_node) {
             assert(block_ptr->mb_size > 0);          
         }
-    }    
+    }
+
+    pthread_mutex_unlock(&lock);    
 }
 
 void mdump() {
     debug("%s", "called mdump()\n");
     debug("%s", "------------------------------------------------------------------------------------------" \
-                "------------------------------------------------------------------------------------------" \
-                "-------------------------\n");
+                "----------------------------------------------------------------------------------------\n");
 
-    
+    pthread_mutex_lock(&lock);
+
     mem_chunk_t *chunk_ptr;
     LIST_FOREACH(chunk_ptr, &chunk_list, ma_node) {
         debug_force("chunk_ptr %p, size %d\n", chunk_ptr, chunk_ptr->size);
@@ -449,16 +506,17 @@ void mdump() {
                 debug_force("\t\t\tprev %p, next %p\n", cur_block_ptr->mb_node.le_prev, cur_block_ptr->mb_node.le_next);
             } else if (size < 0) {
                 debug_force("%s", "\t\t\toccupied\n");
-                // debug_force("%s", "\t\t\tdata: ");
-                // for (int i = 0; i < abs(size); i++) {
-                //     char data_byte = *((char *)cur_block_ptr->mb_data + i);
-                //     if (data_byte == 0) {
-                //         debug_force("%s", "0() ");
-                //     } else {
-                //         debug_force("%d(%c) ", data_byte, data_byte);
-                //     }
-                // }
-                // debug_force("%s", "\n");
+                int first_num_bytes = 16;
+                debug_force("\t\t\tdata (first %d bytes): ", first_num_bytes);
+                for (int i = 0; i < min(first_num_bytes, abs(size)); i++) {
+                    char data_byte = *((char *)cur_block_ptr->mb_data + i);
+                    if (data_byte == 0) {
+                        debug_force("%s", "0() ");
+                    } else {
+                        debug_force("%d(%c) ", data_byte, data_byte);
+                    }
+                }
+                debug_force("%s", "\n");
             }
 
             mem_block_t *prev_block_ptr = cur_block_ptr;
@@ -478,4 +536,6 @@ void mdump() {
             assert(block_ptr->mb_size > 0);          
         }
     }
+
+    pthread_mutex_unlock(&lock);
 }

@@ -3,7 +3,7 @@
 
 #include <stddef.h>
 
-#define MALLOC_DEBUG 1
+#define MALLOC_DEBUG 0
 #define DELETE_FOO 0
 
 #if DELETE_FOO

@@ -1,7 +1,7 @@
 CC = clang
-CFLAGS = -std=gnu11 -Wall -Wextra -fno-omit-frame-pointer -g -fsanitize=address
+CFLAGS = -std=gnu11 -Wall -Wextra -pthread -fno-omit-frame-pointer -g
 
-all: build build/malloc.so build/standards build/functional play
+all: build build/malloc.so build/standards build/functional
 
 build:
 	mkdir -p build
@@ -15,11 +15,8 @@ build/standards: test/standards.c src/malloc.c src/malloc.h
 build/functional: test/functional.c src/malloc.c src/malloc.h
 	$(CC) $(CFLAGS) test/functional.c src/malloc.c -o build/functional -lrt -lm
 
-play: src/malloc.h src/malloc.c play.c
-	$(CC) $(CFLAGS) play.c src/malloc.c -o play
-
 test: all
 	./build/standards && ./build/functional
 
 clean:
-	rm -rf build play
+	rm -rf build
