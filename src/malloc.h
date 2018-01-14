@@ -20,6 +20,6 @@ void *foo_realloc(void *ptr, size_t size);
 int foo_posix_memalign(void **memptr, size_t alignment, size_t size);
 void foo_free(void *ptr);
 void mdump();
-void check_mem();
+void check_mem_integrity();
 
 #endif

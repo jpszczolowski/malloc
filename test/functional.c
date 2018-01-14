@@ -23,7 +23,7 @@
 #endif
 
 MU_TEST(simple_allocating_and_freeing) {
-    int cnt = 100;
+    int cnt = 1000;
     int alloc_size_max = 1 << 15;
     void *ptr[cnt];
 
@@ -34,12 +34,12 @@ MU_TEST(simple_allocating_and_freeing) {
         ptr[i] = foo_malloc(size_to_alloc);
         memset(ptr[i], 'X', size_to_alloc);
         mu_check(ptr[i] != NULL);
-        check_mem();
+        check_mem_integrity();
     }
 
     for (int i = 0; i < cnt; i++) {
         foo_free(ptr[i]);
-        check_mem();
+        check_mem_integrity();
     }
 }
 
@@ -61,7 +61,7 @@ int first_non_empty(void *ptr[], int size) {
     return -1;
 }
 
-#define SIZE 1000000
+#define SIZE 100000
 void *ptr[SIZE];
 int allocated_size[SIZE];
 
@@ -71,7 +71,7 @@ MU_TEST(all_functions_randomly_interleaved) {
     srand(time(NULL));
 
     int alloc_size_max = 1 << 10;
-    int actions = 500 * 1000;
+    int actions = 30 * 1000;
     while (actions--) {
         int action = rand() % 6;
         int idx;
@@ -82,6 +82,7 @@ MU_TEST(all_functions_randomly_interleaved) {
         }
 
         if (idx == -1) {
+            actions++;
             continue;
         }
 
@@ -97,7 +98,7 @@ MU_TEST(all_functions_randomly_interleaved) {
                 mu_check(*((int *) ptr[idx] + i) == 0);
             }
         } else if (action == 2) { // POSIX_MEMALIGN (1/6 = 16.7%)
-            int alignment = 1 << (3 + rand() % 5);
+            int alignment = 1 << (4 + rand() % 5);
             void *new_ptr;
             mu_check(!foo_posix_memalign(&new_ptr, alignment, size_to_alloc));
             mu_check((uint32_t) new_ptr % alignment == 0);
@@ -117,10 +118,10 @@ MU_TEST(all_functions_randomly_interleaved) {
             ptr[idx] = NULL;
         }
 
-        if (action <= 3) { // allocating
+        if (action <= 3) { // malloc, calloc, posix_memalign, realloc
             memset(ptr[idx], 'X', allocated_size[idx]);
         }
-        check_mem();
+        check_mem_integrity();
     }
 
     for (int i = 0; i < SIZE; i++) {
@@ -128,7 +129,7 @@ MU_TEST(all_functions_randomly_interleaved) {
             memset(ptr[i], 'X', allocated_size[i]);
             foo_free(ptr[i]);
             ptr[i] = NULL;
-            check_mem();
+            check_mem_integrity();
         }
     }
 }

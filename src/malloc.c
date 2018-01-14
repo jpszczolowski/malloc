@@ -81,21 +81,16 @@ extern inline mem_block_t *get_block_start_from_user_ptr(void *user_ptr) {
 }
 
 extern inline mem_chunk_t *get_chunk_start_from_block_ptr(mem_block_t *block_ptr) {
-    // debug("called get_chunk_start_from_block_ptr(%p)\n", block_ptr);
-
     mem_block_t *cur_block_ptr = block_ptr;
     do {
         cur_block_ptr = get_prev_block(cur_block_ptr);
     } while (cur_block_ptr->mb_size != 0);
     // cur_block_ptr is now &chunk_ptr->ma_first
 
-    mem_chunk_t *ret = (mem_chunk_t *)((char *)cur_block_ptr - 4 * sizeof(void *));
-    // debug("get_chunk_start_from_block_ptr(%p) returned %p\n", block_ptr, ret);
-    return ret;
+    return (mem_chunk_t *)((char *)cur_block_ptr - 4 * sizeof(void *));
 }
 
 mem_block_t *find_free_block(int32_t size) {
-    // debug("called find_free_block(%d)\n", size);
     assert(size > 0);
 
     mem_chunk_t *chunk_ptr;
@@ -103,7 +98,6 @@ mem_block_t *find_free_block(int32_t size) {
         mem_block_t *block_ptr;
         LIST_FOREACH(block_ptr, &chunk_ptr->ma_freeblks, mb_node) {
             if (block_ptr->mb_size >= size) {
-                // debug("find_free_block(%d) returned %p\n", size, block_ptr);
                 return block_ptr;
             }
         }
@@ -127,8 +121,6 @@ extern inline void set_boundary_tag(mem_block_t *block_ptr) {
 }
 
 mem_block_t *create_chunk_and_return_free_block_ptr(size_t size) {    
-    // debug("called create_chunk_and_return_free_block_ptr(%lu)\n", size);
-
     size_t mmap_len = sizeof(mem_chunk_t) + size + 3 * sizeof(void *);
     // header & data & boundary tag & empty block at the end
     mmap_len = round_up_to(mmap_len, getpagesize());
@@ -269,6 +261,12 @@ void *foo_realloc(void *ptr, size_t size) {
 
     pthread_mutex_unlock(&lock);
     void *new_ptr = foo_malloc(size);
+
+    if (new_ptr == NULL) {
+        assert(errno == ENOMEM); 
+        return NULL;
+    }
+
     memcpy(new_ptr, ptr, min(size32, available_length_in_this_block));
     foo_free(ptr);
     return new_ptr;
@@ -321,9 +319,6 @@ int foo_posix_memalign(void **memptr, size_t alignment, size_t size) {
 
     mem_block_t *block1_ptr = free_block_ptr;
     
-    void *block1_data = &block1_ptr->mb_data;
-    void *user_ptr_to_ret = (void *) round_up_to((size_t) block1_data, alignment);
-
     int32_t probable_block2_size = block1_ptr->mb_size - size32 - 2 * (int32_t) sizeof(void *);
     int32_t minimum_possible_block_size = 2 * sizeof(void *);
 
@@ -345,13 +340,17 @@ int foo_posix_memalign(void **memptr, size_t alignment, size_t size) {
 
         LIST_INSERT_AFTER(block1_ptr, block2_ptr, mb_node);
         LIST_REMOVE(block1_ptr, mb_node);
-
-        assert((unsigned long) block2_ptr->mb_size >= 2 * sizeof(void *));
     }
     
+    void *block1_data = &block1_ptr->mb_data;
+    void *user_ptr_to_ret = (void *) round_up_to((size_t) block1_data, alignment);
+
     assert((size_t) user_ptr_to_ret % alignment == 0);
     assert(block1_ptr->mb_size < 0);
     
+    // now we set bytes from block1_data to user_ptr_to_ret to 0
+    // therefore in future we'll be able to localize start of block having user_ptr
+    // in e.g. free() -- simply by moving backwards as long as bytes are set to 0
     memset(block1_data, 0, user_ptr_to_ret - block1_data);
     *memptr = user_ptr_to_ret;
     
@@ -379,9 +378,7 @@ void foo_free(void *ptr) {
     int prev_block_free = prev_block_ptr->mb_size != 0 && prev_block_ptr->mb_size > 0;
 
     if (next_block_free) {
-        // debug("%s", "next_block_free\n");
-
-        block_ptr->mb_size += next_block_ptr->mb_size + 2 * sizeof(void *); // + boundary tag + next_block_ptr->mb_size
+        block_ptr->mb_size += next_block_ptr->mb_size + 2 * sizeof(void *);
         
         if (!prev_block_free) { // if prev_block_free we'll have leave previous block on the list
             set_boundary_tag(block_ptr);
@@ -392,7 +389,6 @@ void foo_free(void *ptr) {
     }
 
     if (prev_block_free) {
-        // debug("%s", "prev_block_free\n");
         prev_block_ptr->mb_size += block_ptr->mb_size + 2 * sizeof(void *);
         set_boundary_tag(prev_block_ptr);
         
@@ -400,8 +396,6 @@ void foo_free(void *ptr) {
     }
 
     if (get_prev_block(block_ptr)->mb_size == 0 && get_next_block(block_ptr)->mb_size == 0) {
-        // debug("%s", "delete chunk\n");
-        
         // there is only one block (and it's free) in the chunk, so delete the chunk
         mem_chunk_t *chunk_ptr = get_chunk_start_from_block_ptr(block_ptr);
         LIST_REMOVE(chunk_ptr, ma_node);
@@ -409,26 +403,19 @@ void foo_free(void *ptr) {
         size_t length_to_munmap = chunk_ptr->size + sizeof(mem_chunk_t);
         assert(length_to_munmap % getpagesize() == 0);
 
-        // debug("called munmap(%p, %lu)\n", chunk_ptr, length_to_munmap);
         int munmap_ret = munmap(chunk_ptr, length_to_munmap);
         assert(munmap_ret == 0);
     } else if (!prev_block_free && !next_block_free) { // add yourself to the list
-        // debug("%s", "add myself to list\n");
         mem_chunk_t *chunk_ptr = get_chunk_start_from_block_ptr(block_ptr);
-        // debug("chunk addr %p\n", chunk_ptr);
-
-        int added_to_list = 0;
 
         if (LIST_EMPTY(&chunk_ptr->ma_freeblks)) {
-            // debug("%s", "insert_head\n");
             LIST_INSERT_HEAD(&chunk_ptr->ma_freeblks, block_ptr, mb_node);
-            added_to_list = 1;
         } else {
-            // debug("%s", "list_foreach\n");
             mem_block_t *cur_block_ptr;
             mem_block_t *prev_block_ptr;
+            int added_to_list = 0;
+
             LIST_FOREACH(cur_block_ptr, &chunk_ptr->ma_freeblks, mb_node) {
-                // debug("cur_block_ptr %p\n", cur_block_ptr);
                 if (cur_block_ptr > block_ptr) {
                     LIST_INSERT_BEFORE(cur_block_ptr, block_ptr, mb_node);
                     added_to_list = 1;
@@ -436,24 +423,26 @@ void foo_free(void *ptr) {
                 }
                 prev_block_ptr = cur_block_ptr;
             }
+
             if (!added_to_list) {
                 LIST_INSERT_AFTER(prev_block_ptr, block_ptr, mb_node);
-                added_to_list = 1;
             }
-            // debug("prev_block_ptr is now %p\n", prev_block_ptr);
         }
-
-        if (!added_to_list) {
-            pthread_mutex_unlock(&lock);
-            mdump();
-        }
-        assert(added_to_list);
     }
 
     pthread_mutex_unlock(&lock);
 }
 
-void check_mem() {
+/*
+  ___  ___ ___ _   _  ___     _   _  _ ___    ___ _  _ _____ ___ ___ ___ ___ _______   __
+ |   \| __| _ ) | | |/ __|   /_\ | \| |   \  |_ _| \| |_   _| __/ __| _ \_ _|_   _\ \ / /
+ | |) | _|| _ \ |_| | (_ |  / _ \| .` | |) |  | || .` | | | | _| (_ |   /| |  | |  \ V / 
+ |___/|___|___/\___/ \___| /_/ \_\_|\_|___/  |___|_|\_| |_| |___\___|_|_\___| |_|   |_|  
+                                                                                         
+*/
+
+void check_mem_integrity() {
+    debug("%s", "called check_mem()\n");
     pthread_mutex_lock(&lock);
 
     mem_chunk_t *chunk_ptr;
@@ -483,9 +472,7 @@ void check_mem() {
 
 void mdump() {
     debug("%s", "called mdump()\n");
-    debug("%s", "------------------------------------------------------------------------------------------" \
-                "----------------------------------------------------------------------------------------\n");
-
+    
     pthread_mutex_lock(&lock);
 
     mem_chunk_t *chunk_ptr;
