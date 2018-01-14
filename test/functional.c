@@ -20,8 +20,8 @@
 #endif
 
 MU_TEST(allocating_and_freeing) {
-    int cnt = 253;
-    int size = 1 << 5;
+    int cnt = 10000;
+    int size = 1 << 10;
     void *ptr[cnt];
 
     srand(time(NULL));
@@ -33,17 +33,17 @@ MU_TEST(allocating_and_freeing) {
             *((char *) ptr[i] + j) = 'X';
         }
         mu_check(ptr[i] != NULL);
-        mdump();
+        check_mem();
     }
 
     for (int i = 0; i < cnt; i++) {
         foo_free(ptr[i]);
+        check_mem();
     }
 }
 
 MU_TEST_SUITE(all_tests) {
     MU_RUN_TEST(allocating_and_freeing);
-
 }
 
 int main() {

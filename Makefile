@@ -1,5 +1,5 @@
 CC = clang
-CFLAGS = -std=gnu11 -Wall -Wextra -fno-omit-frame-pointer -g # -fsanitize=address
+CFLAGS = -std=gnu11 -Wall -Wextra -fno-omit-frame-pointer -g -fsanitize=address
 
 all: build build/malloc.so build/standards build/functional play
 
