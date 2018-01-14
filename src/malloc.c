@@ -477,7 +477,7 @@ void mdump() {
 
     mem_chunk_t *chunk_ptr;
     LIST_FOREACH(chunk_ptr, &chunk_list, ma_node) {
-        debug_force("chunk_ptr %p, size %d\n", chunk_ptr, chunk_ptr->size);
+        debug_force("chunk ptr %p, size %d\n", chunk_ptr, chunk_ptr->size);
         debug_force("\t%s", "all blocks:\n");
         
         mem_block_t *cur_block_ptr = &chunk_ptr->ma_first;
