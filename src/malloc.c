@@ -442,7 +442,7 @@ void foo_free(void *ptr) {
 */
 
 void check_mem_integrity() {
-    debug("%s", "called check_mem()\n");
+    debug("%s", "called check_mem_integrity()\n");
     pthread_mutex_lock(&lock);
 
     mem_chunk_t *chunk_ptr;
