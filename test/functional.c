@@ -87,7 +87,7 @@ MU_TEST(all_functions_randomly_interleaved) {
         }
 
         int size_to_alloc = rand() % alloc_size_max + 1;
-        
+
         if (action == 0) { // MALLOC (1/6 = 16.7%)
             ptr[idx] = foo_malloc(size_to_alloc);
             allocated_size[idx] = size_to_alloc;
@@ -135,7 +135,7 @@ MU_TEST(all_functions_randomly_interleaved) {
 }
 
 MU_TEST_SUITE(all_tests) {
-    MU_RUN_TEST(simple_allocating_and_freeing);    
+    MU_RUN_TEST(simple_allocating_and_freeing);
     MU_RUN_TEST(all_functions_randomly_interleaved);
 }
 

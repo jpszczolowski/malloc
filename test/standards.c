@@ -39,7 +39,7 @@ MU_TEST(posix_memalign_0_returns_null) {
 MU_TEST(posix_memalign_infinity_returns_enomem) {
     void *ptr;
     int ret = foo_posix_memalign(&ptr, sizeof(void *), ULLONG_MAX);
-    
+
     mu_check(ret == ENOMEM);
 }
 
@@ -59,13 +59,13 @@ MU_TEST(posix_memalign_bad_alignment_returns_einval_2) {
 
 MU_TEST(calloc_size_0_returns_null) {
     void *ptr = foo_calloc(1, 0);
-    
+
     mu_check(ptr == NULL);
 }
 
 MU_TEST(calloc_count_0_returns_null) {
     void *ptr = foo_calloc(0, sizeof(int));
-    
+
     mu_check(ptr == NULL);
 }
 
@@ -79,7 +79,7 @@ MU_TEST(calloc_infinity_returns_enomem) {
 MU_TEST(calloc_sets_memory_to_zero) {
     int count = 42;
     int *ptr = foo_calloc(count, sizeof(int));
-    
+
     mu_check(ptr != NULL);
     for (int i = 0; i < count; i++) {
         mu_check(ptr[i] == 0);
@@ -110,10 +110,10 @@ MU_TEST(realloc_infinity_returns_enomem) {
     mu_check(ptr != NULL);
 
     ptr = foo_realloc(ptr, ULLONG_MAX);
-    
+
     mu_check(ptr == NULL);
     mu_check(errno == ENOMEM);
-    foo_free(ptr);   
+    foo_free(ptr);
 }
 
 MU_TEST_SUITE(all_tests) {

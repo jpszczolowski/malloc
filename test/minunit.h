@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2012 David Siñuela Pastor, siu.4coders@gmail.com
- * 
+ *
  * Permission is hereby granted, free of charge, to any person obtaining
  * a copy of this software and associated documentation files (the
  * "Software"), to deal in the Software without restriction, including
@@ -8,10 +8,10 @@
  * distribute, sublicense, and/or sell copies of the Software, and to
  * permit persons to whom the Software is furnished to do so, subject to
  * the following conditions:
- * 
+ *
  * The above copyright notice and this permission notice shall be
  * included in all copies or substantial portions of the Software.
- * 
+ *
  * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
  * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
  * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
@@ -234,13 +234,13 @@ static double mu_timer_real(void)
 	/* Windows 2000 and later. ---------------------------------- */
 	LARGE_INTEGER Time;
 	LARGE_INTEGER Frequency;
-	
+
 	QueryPerformanceFrequency(&Frequency);
 	QueryPerformanceCounter(&Time);
-	
+
 	Time.QuadPart *= 1000000;
 	Time.QuadPart /= Frequency.QuadPart;
-	
+
 	return (double)Time.QuadPart / 1000000.0;
 
 #elif (defined(__hpux) || defined(hpux)) || ((defined(__sun__) || defined(__sun) || defined(sun)) && (defined(__SVR4) || defined(__svr4__)))
