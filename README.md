@@ -44,7 +44,7 @@ Feel free to try it on `ls`, `xeyes`, `gnome-calculator`, `firefox` or `nautilus
 ### Tests
 In `tests` folder you will find two tests:
 - `functional.c` that checks some randomly interleaved scenario (as well as memory integrity after each action),
-- `standards.c` that cheks conformnance to standards, e.g. whether `calloc` sets memory to zero or whether `posix_memalign` returns EINVAL when given bad alignment etc.
+- `standards.c` that checks conformnance to standards, e.g. whether `calloc` sets memory to zero or whether `posix_memalign` returns EINVAL when given bad alignment etc.
 
 Tests are written in [minunit](https://github.com/siu/minunit), a "minimal unit testing framework for C". Running them is as simple as:
 ```bash
