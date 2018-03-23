@@ -48,5 +48,5 @@ In `tests` folder you will find two tests:
 
 Tests are written in [minunit](https://github.com/siu/minunit), a "minimal unit testing framework for C". Running them is as simple as:
 ```bash
-make test
+$ make test
 ```
